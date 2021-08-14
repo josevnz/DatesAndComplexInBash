@@ -1,0 +1,1 @@
+/usr/bin/curl --silent --location --fail --output "$HOME/covid19-vaccinations-town-age-grp.csv"  --url 'https://data.ct.gov/api/views/gngw-ukpw/rows.csv?accessType=DOWNLOAD'
