@@ -273,7 +273,141 @@ So atq is a very convenient 'fire and forget' scheduler, who can also work with 
 
 ## Multiple task dependencies, running on multiple hosts: Airflow to the rescue
 
-TODO
+This last example has little less to do with cron and Bash and more to how to create a complex pipeline of tasks, that can run on different machines and have interdependencies.
+
+Crob specifically is not very good at  putting together multiple tasks that depend on each other. Luckyly for us, there are sophisticated tools like [Apache Airflow](https://airflow.apache.org/) that we can use to create complex pipelines and workflows.
+
+I want to show you a different example: I have different git repositories across my machines at my home network. I want to ensure I commit changes on some of those repositores automatically, pushing some of those changes remotely if needed.
+
+In Airflow you define your tasks using Python. This is great as you can add your own modules, the syntax is familiar and you can also keep your job definitions under version control (like Git).
+
+So how does our new job looks like? Here [is the DAG](https://github.com/josevnz/DatesAndComplexInBash/blob/main/git_tasks.py) (heavily documented in Markup format):
+
+```python=
+# pylint: disable=pointless-statement,line-too-long
+"""
+# Make git backups on different hosts in Nunez family servers
+## Replacing the following cron jobs on dmaf5
+----------------------------------------------------------------------
+MAILTO=kodegeek.com@protonmail.com
+*/5 * * * * cd $HOME/Documents && /usr/bin/git add -A && /usr/bin/git commit -m "Automatic check-in" >/dev/null 2>&1
+*/30 * * * * cd $HOME/Documents && /usr/bin/git push --mirror > $HOME/logs/codecommit-push.log 2>&1
+----------------------------------------------------------------------
+"""
+from datetime import timedelta
+from pathlib import Path
+from os import path
+from textwrap import dedent
+from airflow import DAG
+from airflow.providers.ssh.operators.ssh import SSHOperator
+from airflow.operators.bash import BashOperator
+from airflow.utils.dates import days_ago
+
+default_args = {
+    'owner': 'josevnz',
+    'depends_on_past': False,
+    'email': ['myemail@kodegeek.com'],
+    'email_on_failure': True,
+    'email_on_retry': False,
+    'retries': 5,
+    'retry_delay': timedelta(minutes=30),
+    'queue': 'git_queue'
+}
+
+TUTORIAL_PATH = f'{path.join(Path.home(), "DatesAndComplexInBash")}'
+DOCUMENTS_PATH = f'{path.join(Path.home(), "Documents")}'
+
+with DAG(
+    'git_tasks',
+    default_args=default_args,
+    description='Git checking/push/pull across Nunez family servers, during week days 6:00-19:00',
+    schedule_interval='*/30 6-19 * * 1-5',
+    start_date=days_ago(2),
+    tags=['backup', 'git'],
+    ) as git_backup_dag:
+    git_backup_dag.doc_md = __doc__
+
+    git_commit_documents = SSHOperator(
+        task_id='git_commit_documents',
+        depends_on_past=False,
+        ssh_conn_id="ssh_josevnz_dmaf5",
+        params={'documents': DOCUMENTS_PATH},
+        command=dedent(
+        """
+        cd {{params.documents}} && \
+        /usr/bin/git add --ignore-errors --all \
+        &&
+        /usr/bin/git commit --quiet --message 'Automatic Document check-in @ dmaf5 {{ task }}'
+        """
+        )
+    )
+    git_commit_documents.doc_md = dedent(
+    """
+    #### Jose git commit PRIVATE documents on dmaf5 machine
+    * Add and commit with a default message.
+    * Templated using Jinja2 and f-strings
+    """
+    )
+
+    git_push_documents = SSHOperator(
+        task_id='git_push_documents',
+        depends_on_past=False,
+        ssh_conn_id="ssh_josevnz_dmaf5",
+        params={'documents': DOCUMENTS_PATH},
+        command=dedent(
+        """
+        cd {{params.documents}} && \
+        /usr/bin/git push
+        """
+        )
+    )
+    git_push_documents.doc_md = dedent(
+    """
+    #### Jose git push PRIVATE documents from dmaf5 machine into private remote repository
+    """
+    )
+
+    remote_repo_git_clone = BashOperator(
+        task_id='remote_repo_git_clone',
+        depends_on_past=False,
+        params={'tutorial': TUTORIAL_PATH},
+        bash_command=dedent(
+        """
+        cd {{params.tutorial}} \
+        && \
+        /usr/bin/git pull --quiet
+        """
+        )
+    )
+    remote_repo_git_clone.doc_md = dedent(
+    """
+    You need to clone the repository first:
+    git clone --verbose git@github.com:josevnz/DatesAndComplexInBash.git
+    Uses BashOperator as it runs on the same machine where Airflow runs.
+    """
+    )
+
+    # Task relantionships
+    # Git documents is a dependency for push documents
+    git_commit_documents >> git_push_documents
+    # No dependency except the day of the week and time
+    remote_repo_git_clone
+```
+
+The relationships of these tasks can be seen on the GUI (In this case the graph mode)
+
+![Git task relationships](https://github.com/josevnz/DatesAndComplexInBash/raw/main/git_tasks_dag.png "Git task DAG with 3 tasks")
 
 
+There is a lot more to learn about Airflow. You are more than welcome to [look around](https://kodegeek-com.medium.com/using-airflow-to-replace-cron-on-your-home-network-7dbd2a35293) to get more details and learn more.
+
+# Wrap up
+
+That was a lot of ground to cover in one article. Dealing with dates and time is a complex task, but luckly you have plenty tools out there to help you in your coding tasks. Here are the things you learned how to do:
+
+* Formatting options in /usr/bin/date that can be used to alter the way your scripts behave
+* Using inotify-tools to efficiently listen for events related with the filesystem, like waiting for a file to be copied
+* Automating periodic repetitive taks with 'cron' and using 'at' when a little bit more of flexibility is required
+* When cron fails short you can resort to more advanced frameworks like Airflow.
+* As usual, [statically your scripts with pylint or bash SpellCheck](https://www.redhat.com/sysadmin/bash-error-handling). Save yourself some headaches.
 
