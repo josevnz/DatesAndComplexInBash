@@ -145,7 +145,7 @@ Note the timeout in seconds (28,800 = 8 hours). inotifywait will exit after that
 
 ## Do it once by hand. Do it twice with Cron
 
-Do you remember the script we wrot to download the Covid 19 data early on? If we want to automate that we can make it part of a [cron-job](https://www.redhat.com/sysadmin/automate-linux-tasks-cron), without the hour and day of the week logic:
+Do you remember the script we wrote to download the Covid 19 data early on? If we want to automate that we can make it part of a [cron-job](https://www.redhat.com/sysadmin/automate-linux-tasks-cron), without the hour and day of the week logic:
 
 As a reminder, this is the command we want to run:
 ```shell=
@@ -162,18 +162,113 @@ report_file="$HOME/covid19-vaccinations-town-age-grp.csv"
 To run it every weekday at 6:00 PM and save the output to a log:
 
 ```shell=
+# minute (0-59),
+#    hour (0-23),
+#       day of the month (1-31),
+#          month of the year (1-12),
+#             day of the week (0-6, 0=Sunday),
+#                command
 0 18 * * 1-5 /usr/bin/curl --silent --location --fail --output "$HOME/covid19-vaccinations-town-age-grp.csv"  --url 'https://data.ct.gov/api/views/gngw-ukpw/rows.csv?accessType=DOWNLOAD' > $HOME/logs/covid19-vaccinations-town-age-grp.log
 ```
 
-There are lots of tutorials out there about cron, just wanted to make sure you know sometimes you don't have to reinvent the wheel. Of course you can use tools like [Crontab-Generator](https://crontab-generator.org/) to get the proper syntax.
+Cron gives you also flexibility to do things that you can only achieve with other tools like systemd units. For example, say that I want to download the vaccination details as soon my Linux server is rebooted (This worked for me on Fedora 29):
 
-Now ... what if I need to run something but not right away? Generating a crontab for that may be too complicated so lets see what else we can do.
+```shell=
+@reboot /usr/bin/curl --silent --location --fail --output "$HOME/covid19-vaccinations-town-age-grp.csv"  --url 'https://data.ct.gov/api/views/gngw-ukpw/rows.csv?accessType=DOWNLOAD' > $HOME/logs/covid19-vaccinations-town-age-grp.log
+```
+
+So how do you edit/ maintain your cron jobs? ```crontab -e``` gives you an interactive editor with some syntax checks). [I prefer to use Ansible cron module](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/cron_module.html) to automate my cron editing, plus that ensures I can keep my jobs on Git for proper review and deploy.
+
+Finally, cron syntax is very powerful and that can lead to unexpected complexity.You can use tools like [Crontab-Generator](https://crontab-generator.org/) to get the proper syntax, without having to think too much the meaning of each field.
+
+Now ... *what if I need to run something but not right away*? Generating a crontab for that may be too complicated so lets see what else we can do.
 
 
 ## Running on the background is not enough, using atq
 
-TODO
+The unix tool atq is very similar to cron, but its beauty is that it support a ver loose and rich syntax on how to schedule jobs for execution.
 
+Imagine the following example: You need to go out to run an errand in 50 minutes and you want to leave your server downloading a file. Let's say than it is OK to download the file in 60 minutes from now:
+
+
+```shell=
+cat aqt_job.txt
+/usr/bin/curl --silent --location --fail --output "$HOME/covid19-vaccinations-town-age-grp.csv"  --url 'https://data.ct.gov/api/views/gngw-ukpw/rows.csv?accessType=DOWNLOAD'
+at 'now + 1 hour' -f aqt_job.txt
+warning: commands will be executed using /bin/sh
+job 10 at Sat Aug 14 06:59:00 2021
+```
+
+We can confirm our job was indeed schedule for run (remember the job id = 10?):
+```shell=
+atq
+10	Sat Aug 14 06:59:00 2021 a josevnz
+```
+
+And if we changed our mind, we can remove it:
+```shell=
+atrm 10
+atq
+```
+
+Back to our original script. Let's rewrite it ([v3](https://github.com/josevnz/DatesAndComplexInBash/blob/main/WorkingWithDateAndTimeAt.sh)) to use 'at' instead of just 'date' for scheduling the data file download:
+
+```shell=
+#!/bin/bash
+# Simple script that shows how to work with dates and times, and Unix 'at'
+# Jose Vicente Nunez Zuleta
+#
+test -x /usr/bin/date || exit 100
+test -x /usr/bin/at || exit 100
+
+report_file="$HOME/covid19-vaccinations-town-age-grp.csv"
+export report_file
+
+function create_at_job_file {
+    /usr/bin/cat<<AT_FILE>"$1"
+    # COVID-19 Vaccinations by Town and Age Group
+    /usr/bin/curl \
+        --silent \
+        --location \
+        --fail \
+        --output "$report_file" \
+        --url 'https://data.ct.gov/api/views/gngw-ukpw/rows.csv?accessType=DOWNLOAD'
+AT_FILE
+}
+
+function is_week_day {
+  local -i day_of_week
+  day_of_week=$(/usr/bin/date +%u)|| exit 100
+  # 1 = Monday .. 5 = Friday
+  test "$day_of_week" -ge 1 -a "$day_of_week" -le 5 && return 0 || return 1
+}
+
+function already_there {
+    # My job is easy to spot as it has a unique footprint...
+    for job_id in $(/usr/bin/atq| /usr/bin/cut -f1 -d' '| /usr/bin/tr -d 'a-zA-Z'); do
+      if [ "$(/usr/bin/at -c "$job_id"| /usr/bin/grep -c 'COVID-19 Vaccinations by Town and Age Group')" -eq 1 ]; then
+        echo "Hmmm, looks like job $job_id is already there. Not scheduling a new one. To cancel: '/usr/bin/atrm $job_id'"
+        return 1
+      fi
+    done
+    return 0
+}
+
+# No updates during the weekend, so don't bother (not an error)
+is_week_day || exit 0
+
+# Did we schedule this before?
+already_there|| exit 100
+
+ATQ_FILE=$(/usr/bin/mktemp)|| exit 100
+export ATQ_FILE
+trap '/bin/rm -f $ATQ_FILE' INT EXIT QUIT
+echo "$ATQ_FILE"
+create_at_job_file "$ATQ_FILE"|| exit 100
+/usr/bin/at '6:00 PM' -f "$ATQ_FILE"
+```
+
+So atq is a very convenient 'fire and forget' scheduler, who can also work with the load of the machine. You're more than welcome to go deeper and find out [more details about 'at'](https://linux.die.net/man/1/at).
 
 
 ## Multiple task dependencies, running on multiple hosts: Airflow to the rescue
