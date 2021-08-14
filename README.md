@@ -75,15 +75,106 @@ Downloaded: /home/josevnz/covid19-vaccinations-town-age-grp.csv
 
 ## Waiting for a file using inotify tools
 
-TODO
+Let's switch to another type of problem: You are waiting for a file named "$HOME/lshw.json" to arrive and once is there you want to start processing it. I wrote this ([v1](https://github.com/josevnz/DatesAndComplexInBash/blob/main/WaitForFile.sh)):
+
+```shell=
+#!/bin/bash
+# Wait for a file to arrive and once is there process it
+# Author: Jose Vicente Nunez Zuleta
+test -x /usr/bin/jq || exit 100
+LSHW_FILE="$HOME/lshw.json"
+# Enable the debug just to show what is going on...
+trap "set +x" QUIT EXIT
+set -x
+while [ ! -f "$LSHW_FILE" ]; do
+    sleep 30
+done
+/usr/bin/jq ".|.capabilities" "$LSHW_FILE"|| exit 100
+```
+
+And some magic process generate the file for us while we are waiting:
+```shell=
+sudo /usr/sbin/lshw -json > $HOME/lshw.json
+```
+
+And we wait... until the file arrives
+```shell=
+ ./WaitForFile.sh 
++ '[' '!' -f /home/josevnz/lshw.json ']'
++ sleep 30
++ '[' '!' -f /home/josevnz/lshw.json ']'
++ /usr/bin/jq '.|.capabilities' /home/josevnz/lshw.json
+{
+  "smbios-3.2.1": "SMBIOS version 3.2.1",
+  "dmi-3.2.1": "DMI version 3.2.1",
+  "smp": "Symmetric Multi-Processing",
+  "vsyscall32": "32-bit processes"
+}
++ set +x
+
+```
+
+There are a few problems with this approach:
+* You may be waiting too much. If the file arrives 1 second after you start sleeping you wait 29 seconds doing nothing
+* If you sleep too little you are wasting CPU cycles
+* What happens if the file never arrives? You could use the timeout tool and a more complex logic to handle this scenario.
+
+Or you can just use the [Inotify API](https://www.man7.org/linux/man-pages/man7/inotify.7.html) with [inotify-tools](https://github.com/inotify-tools/inotify-tools/wiki) and [do better](https://www.man7.org/linux/man-pages/man1/inotifywait.1.html), [version 2 of the script](https://github.com/josevnz/DatesAndComplexInBash/blob/main/WaitForFile2.sh):
+
+```shell=
+#!/bin/bash
+# Wait for a file to arrive and once is there process it
+# Author: Jose Vicente Nunez Zuleta
+test -x /usr/bin/jq || exit 100
+test -x /usr/bin/inotifywait|| exit 100
+test -x /usr/bin/dirname|| exit 100
+LSHW_FILE="$HOME/lshw.json"
+while [ ! -f "$LSHW_FILE" ]; do
+    test "$(/usr/bin/inotifywait --timeout 28800 --quiet --syslog --event close_write "$(/usr/bin/dirname "$LSHW_FILE")" --format '%w%f')" == "$LSHW_FILE" && break
+done
+/usr/bin/jq ".|.capabilities" "$LSHW_FILE"|| exit 100
+```
+
+So if a random file shows up on $HOME it won't break the wait cycle,but if our file shows up there and is fully written we will exit the loop:
+```shell=
+/usr/bin/touch $HOME/randomfilenobodycares.txt
+sudo /usr/sbin/lshw -json > $HOME/lshw.json
+```
+
+Note the timeout in seconds (28,800 = 8 hours). inotifywait will exit after that if the file is not there...
+
+## Do it once by hand. Do it twice with Cron
+
+Do you remember the script we wrot to download the Covid 19 data early on? If we want to automate that we can make it part of a [cron-job](https://www.redhat.com/sysadmin/automate-linux-tasks-cron), without the hour and day of the week logic:
+
+As a reminder, this is the command we want to run:
+```shell=
+report_file="$HOME/covid19-vaccinations-town-age-grp.csv"
+# COVID-19 Vaccinations by Town and Age Group
+/usr/bin/curl \
+    --silent \
+    --location \
+    --fail \
+    --output "$report_file" \
+    --url 'https://data.ct.gov/api/views/gngw-ukpw/rows.csv?accessType=DOWNLOAD'
+```
+
+To run it every weekday at 6:00 PM and save the output to a log:
+
+```shell=
+0 18 * * 1-5 /usr/bin/curl --silent --location --fail --output "$HOME/covid19-vaccinations-town-age-grp.csv"  --url 'https://data.ct.gov/api/views/gngw-ukpw/rows.csv?accessType=DOWNLOAD' > $HOME/logs/covid19-vaccinations-town-age-grp.log
+```
+
+There are lots of tutorials out there about cron, just wanted to make sure you know sometimes you don't have to reinvent the wheel. Of course you can use tools like [Crontab-Generator](https://crontab-generator.org/) to get the proper syntax.
+
+Now ... what if I need to run something but not right away? Generating a crontab for that may be too complicated so lets see what else we can do.
+
 
 ## Running on the background is not enough, using atq
 
 TODO
 
-## Do it once by hand. Do it twice with Cron
 
-TODO
 
 ## Multiple task dependencies, running on multiple hosts: Airflow to the rescue
 
