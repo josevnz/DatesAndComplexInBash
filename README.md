@@ -409,5 +409,5 @@ That was a lot of ground to cover in one article. Dealing with dates and time is
 * Using inotify-tools to efficiently listen for events related with the filesystem, like waiting for a file to be copied
 * Automating periodic repetitive taks with 'cron' and using 'at' when a little bit more of flexibility is required
 * When cron fails short you can resort to more advanced frameworks like Airflow.
-* As usual, [statically your scripts with pylint or bash SpellCheck](https://www.redhat.com/sysadmin/bash-error-handling). Save yourself some headaches.
+* As usual, [statically check your scripts with pylint or bash SpellCheck](https://www.redhat.com/sysadmin/bash-error-handling). Save yourself some headaches.
 
