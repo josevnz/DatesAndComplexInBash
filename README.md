@@ -1,5 +1,7 @@
 # Handling dates and performing complex or timed tasks in Bash
 
+![](mazinger-z.png)
+
 > Most of the time you run your script and you care about the result of that task. However, if the task becomes complex or it if it needs to execute to a particular time, there are other ways to achieve the same
 
 Ideally by the end of this article you should be able to do the following:
